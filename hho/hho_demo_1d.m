@@ -1,12 +1,21 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%       /\
+%      /__\       Matteo Cicuttin (C) 2016 - matteo.cicuttin@enpc.fr
+%     /_\/_\      École Nationale des Ponts et Chaussées - CERMICS
+%    /\    /\
+%   /__\  /__\    1D Hybrid High-order demo code
+%  /_\/_\/_\/_\
+%
+
 function hho()
 
-    what = 3;
+    what = 4;
 
     if (what == 1)
         plot_hho_convergence();
     end
         
-    N = 4;
+    N = 64;
     K = 1;
     pd = initialize_hho(N, K);
     
@@ -18,8 +27,35 @@ function hho()
         [~, x, y] = hho(pd, @f_load, @f_solution);
         plot(x,y);
     end
+    
+    if (what == 4)
+        hho_eigenvalues(pd);
+    end
 end
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Make the struct with the problem parameters
+function pd = initialize_hho(N, K)
+    pd = struct;
+    pd.N = N;
+    pd.K = K;
+    pd.h = 1/pd.N;
+    pd.tp = 8;
+end
+
+% Load function
+function l = f_load(x)
+    l = sin(pi*x) * pi^2;
+    return;
+end
+
+% Analytical solution
+function l = f_solution(x)
+    l = sin(pi*x);
+    return;
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function plot_hho_convergence()
     
     for deg = 0:4
@@ -47,24 +83,8 @@ function plot_hho_convergence()
 end
     
 
-function pd = initialize_hho(N, K)
-    pd = struct;
-    pd.N = N;
-    pd.K = K;
-    pd.h = 1/pd.N;
-    pd.tp = 8;
-end
-
-function l = f_load(x)
-    l = sin(pi*x) * pi^2;
-    return;
-end
-
-function l = f_solution(x)
-    l = sin(pi*x);
-    return;
-end
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Quadrature rule to integrate polynomials
 function [nodes, weights] = gauss_quadrature(order, h, elem)
     if rem(order, 2) == 0
         order = order+1;
@@ -98,7 +118,7 @@ function [nodes, weights] = gauss_quadrature(order, h, elem)
     nodes = h*( (0.5*tnodes) + ((elem-0.5)*all_ones));
 end
 
-
+% Basis functions
 function [phi, dphi] = basis(centr, point, h, dgree)
     for ii = 0:dgree
         phi(ii+1) = ((point-centr)/h)^ii;
@@ -113,6 +133,7 @@ function [phi, dphi] = basis(centr, point, h, dgree)
     dphi = dphi';
 end
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function xT = cell_center(pd, ii)
     xT = (ii-0.5)*pd.h;
 end
@@ -143,6 +164,7 @@ function P = projector(pd, ii, fun)
     P = [pT;pF'];
 end
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function error = compute_error(pd, ii, fun, dofs)
     [nodes,weights] = gauss_quadrature(2*pd.K, pd.h, ii);
     
@@ -162,22 +184,34 @@ function error = compute_error(pd, ii, fun, dofs)
     error = dot(pT-dofs, mass_mat*(pT-dofs));
 end
 
-function [GT, A] = gradient_reconstruction(pd, ii)
-
+function cell_data = compute_cell_data(pd, ii)
     [nodes,weights] = gauss_quadrature(2*(pd.K+1), pd.h, ii);
-    
+    [MM, SM]            = cell_matrices(pd, ii, nodes, weights);
+    cell_data           = struct;
+    cell_data.MM        = MM;
+    cell_data.SM        = SM;
+    cell_data.qnodes    = nodes;
+    cell_data.qweights  = weights;
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function [MM, SM] = cell_matrices(pd, ii, nodes, weights)
+    xT = cell_center(pd, ii);
+
+    MM = zeros(pd.K+2, pd.K+2);
+    SM = zeros(pd.K+2, pd.K+2);
+    for wi = 1:length(weights)
+        [phi, dphi] = basis(xT, nodes(wi), pd.h, pd.K+1);
+        MM = MM + weights(wi)*phi*phi';
+        SM = SM + weights(wi)*dphi*dphi';
+    end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function R = reconstruction_operator(pd, ii, stiff_mat)
     xT = cell_center(pd, ii);
     [xF1, xF2] = face_centers(pd, ii);
 
-    stiff_mat = zeros(pd.K+2, pd.K+2);
-    MG = zeros(pd.K+1, pd.K+1);
-    BG = zeros(pd.K+1, pd.K+3);
-    
-    for wi = 1:length(weights)
-        [~, dphi] = basis(xT, nodes(wi), pd.h, pd.K+1);
-        stiff_mat = stiff_mat + weights(wi)*dphi*dphi';
-    end
-    
     MG = stiff_mat(2:end, 2:end);
     BG(:,1:pd.K+1) = stiff_mat(2:end,1:pd.K+1);
     [phiF1, dphiF1] = basis(xT, xF1, pd.h, pd.K+1);
@@ -188,8 +222,7 @@ function [GT, A] = gradient_reconstruction(pd, ii)
     BG(1:end, pd.K+2) = - dphiF1(2:end);
     BG(1:end, pd.K+3) = + dphiF2(2:end);
     
-    GT = MG\BG;
-    A = BG'*GT;
+    R = MG\BG;
 end
 
 function tps = make_test_points(pd, ii)
@@ -203,8 +236,8 @@ function test_gradient_reconstruction(pd)
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
         l = projector(pd, ii, @f_solution);
-        [GT, ~] = gradient_reconstruction(pd, ii);
-        g = GT*l;
+        R = reconstruction_operator(pd, ii);
+        g = R*l;
         
         tps = make_test_points(pd, ii);
         for tp_i = 1:length(tps)
@@ -221,27 +254,21 @@ function test_gradient_reconstruction(pd)
     plot(x_val, gradient);
 end
 
-function S = stabilization(pd, ii, GT)
-    [nodes,weights] = gauss_quadrature(2*pd.K+2, pd.h, ii);
+% Compute stabilization
+function S = stabilization(pd, ii, R, mass_mat)
     
     xT = cell_center(pd, ii);
     [xF1, xF2] = face_centers(pd, ii);
     
-    mass_mat = zeros(pd.K+2, pd.K+2);
-    for wi = 1:length(weights)
-        [phi, ~] = basis(xT, nodes(wi), pd.h, pd.K+1);
-        mass_mat = mass_mat + weights(wi)*phi*phi';
-    end
-    
     M1 = mass_mat(1:pd.K+1,1:pd.K+1);
     M2 = mass_mat(1:pd.K+1,2:pd.K+2);
-    P1 = - M1\(M2*GT);
+    P1 = - M1\(M2*R);
     P1(1:pd.K+1, 1:pd.K+1) = P1(1:pd.K+1, 1:pd.K+1) + eye(pd.K+1);
     
     [phiF1, ~] = basis(xT, xF1, pd.h, pd.K+1);
     MFF = 1;
     MFT = phiF1;
-    P2 = MFF \ (MFT(2:end)'*GT);
+    P2 = MFF \ (MFT(2:end)'*R);
     P2(pd.K+2) = P2(pd.K+2)-1;
     P3 = MFF \ (MFT(1:pd.K+1)'*P1);
     B = P2 + P3;
@@ -250,13 +277,14 @@ function S = stabilization(pd, ii, GT)
     [phiF2, ~] = basis(xT, xF2, pd.h, pd.K+1);
     MFF = 1;
     MFT = phiF2;
-    P2 = MFF \ (MFT(2:end)'*GT);
+    P2 = MFF \ (MFT(2:end)'*R);
     P2(pd.K+3) = P2(pd.K+3)-1;
     P3 = MFF \ (MFT(1:pd.K+1)'*P1);
     B = P2 + P3;
     S = S + B' * MFF * B / pd.h;
 end
 
+% Compute cell right hand side
 function rhs = cell_rhs(pd, ii, fun)
     [nodes,weights] = gauss_quadrature(2*pd.K+2, pd.h, ii);
     
@@ -269,6 +297,7 @@ function rhs = cell_rhs(pd, ii, fun)
     end
 end
 
+% Do static condensation
 function [AC, bC] = static_condensation(pd, A, bT)
     K_TT = A(1:pd.K+1, 1:pd.K+1);
     K_TF = A(1:pd.K+1, end-1:end);
@@ -282,7 +311,7 @@ function [AC, bC] = static_condensation(pd, A, bT)
     bC = - K_FT * bL;
 end
 
-
+% Run HHO method
 function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
     cell_size = pd.K+1;
     face_offset = cell_size*pd.N;
@@ -296,8 +325,10 @@ function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
     
     % Assemble global matrix
     for ii = 1:pd.N
-        [GT, A] = gradient_reconstruction(pd, ii);
-        S = stabilization(pd, ii, GT);
+        data = compute_cell_data(pd, ii);
+        R = reconstruction_operator(pd, ii, data.SM);
+        S = stabilization(pd, ii, R, data.MM);
+        A = R' * data.SM(2:end, 2:end) * R;
         LC = A + S;
         rhs = cell_rhs(pd, ii, loadfun);
         
@@ -327,8 +358,10 @@ function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
     pos = 1;
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
-        [GT, A] = gradient_reconstruction(pd, ii);
-        S = stabilization(pd, ii, GT);
+        data = compute_cell_data(pd, ii);
+        R = reconstruction_operator(pd, ii, data.SM);
+        S = stabilization(pd, ii, R, data.MM);
+        A = R' * data.SM(2:end, 2:end) * R;
         LC = A + S;
         rhs = cell_rhs(pd, ii, loadfun);
         
@@ -352,3 +385,111 @@ function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
     
     globerr = sqrt(error);
 end
+
+function hho_eigenvalues(pd)
+    cell_size = pd.K+1;
+    face_offset = cell_size*pd.N;
+    num_cells = pd.N;
+    num_faces = pd.N+1;
+    system_size = num_cells*cell_size + num_faces;
+    disp(sprintf('System size: %d', system_size));
+    
+    globA = sparse(system_size, system_size);
+    globR = sparse(system_size, system_size);
+    
+    for ii = 1:pd.N
+        data = compute_cell_data(pd, ii);
+        R = reconstruction_operator(pd, ii, data.SM);
+        S = stabilization(pd, ii, R, data.MM);
+        A = R' * data.SM(2:end, 2:end) * R;
+        LC = A + S;
+        
+        sz = size(R);
+        const = zeros(1, sz(2));
+        const(1) = 1;
+        B = [const;R]'*data.MM*[const;R];
+        
+        
+        for dof_i = 1:cell_size
+            l2g(dof_i) = (ii-1)*cell_size+dof_i;
+        end
+        l2g(cell_size+1) = face_offset+ii;
+        l2g(cell_size+2) = face_offset+ii+1;
+        
+        for dof_i = 1:cell_size+2
+            for dof_j = 1:cell_size+2
+                globA(l2g(dof_i),l2g(dof_j)) = globA(l2g(dof_i),l2g(dof_j)) + LC(dof_i, dof_j);
+                globR(l2g(dof_i),l2g(dof_j)) = globR(l2g(dof_i),l2g(dof_j)) + B(dof_i, dof_j);
+            end
+        end
+    end
+    
+    % Apply boundary conditions
+    globA(face_offset+1,:) = [];
+    globA(:,face_offset+1) = [];
+    globA(face_offset+num_faces-1,:) = [];
+    globA(:,face_offset+num_faces-1) = [];
+    globR(face_offset+1,:) = [];
+    globR(:,face_offset+1) = [];
+    globR(face_offset+num_faces-1,:) = [];
+    globR(:,face_offset+num_faces-1) = [];
+    
+    % Solve eigenvalue problem
+    sz = size(globA);
+    
+    [V,D] = eig(full(globA), full(globR));
+    DD = diag(D);
+    
+    %K = [DD,V];
+    [~,I] = sort(DD);
+    
+    lambda_h = DD(I);
+    n = linspace(1,length(DD),length(DD))';
+    lambda = (pi*n).^2;
+    eig_error = (lambda_h-lambda)./lambda;
+    
+    for ev_i = 1:length(DD)
+        disp(sprintf('Eigenvalue: %g', lambda_h(ev_i)));
+        eigv = V(:,I(ev_i));
+        reconstruct_eigenvector(pd, eigv, ev_i);
+        pause;
+    end
+    
+    %plot(eig_error)
+   
+end
+
+function reconstruct_eigenvector(pd, ev, ev_i)
+    pos = 1;
+    error = 0;
+    for ii = 1:pd.N
+        xT = cell_center(pd, ii);
+        [nodes,weights] = gauss_quadrature(2*pd.K, pd.h, ii);
+ 
+        for kk = 1:length(nodes)
+            [phi, ~] = basis(xT, nodes(kk), pd.h, pd.K);
+            start = (ii-1) * (pd.K+1) + 1;
+            stop = ii * (pd.K+1);
+            x_val(pos) = nodes(kk);
+            yh = dot( ev(start:stop), phi );
+            y = sin(ev_i*pi*nodes(kk));
+            w(pos) = weights(kk);
+            yh_val(pos) = yh;
+            y_val(pos) = y;
+            pos = pos+1;
+        end
+    end
+    
+    if (yh_val(2) < yh_val(1))
+        yh_val = -yh_val;
+    end
+    
+    error = sqrt(dot(w, (yh_val - y_val).^2));
+    error
+    plot(x_val, yh_val);
+    hold on;
+    plot(x_val, y_val);
+    hold off;
+end
+
+
