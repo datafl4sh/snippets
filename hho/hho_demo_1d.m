@@ -9,14 +9,14 @@
 
 function hho()
 
-    what = 4;
+    what = 2;
 
     if (what == 1)
         plot_hho_convergence();
     end
-        
-    N = 64;
-    K = 1;
+    
+    N = 16;
+    K = 2;
     pd = initialize_hho(N, K);
     
     if (what == 2)
@@ -64,16 +64,18 @@ function plot_hho_convergence()
         for ii = 1:maxii
             disp(sprintf('**** N = %d, K = %d ****', nodes, deg));
             pd = initialize_hho(nodes, deg);
-            e = hho(pd, @f_load, @f_solution);
+            [e, ~, ~, he] = hho(pd, @f_load, @f_solution);
             err(deg+1, ii) = e;
+            herr(deg+1, ii) = he;
             h(deg+1, ii) = 1/nodes;
             disp(sprintf('h = %g, error = %g', 1/nodes, e));
             nodes = nodes*2;
             
             for fig = 1:deg+1
                 loglog(h(fig,:),err(fig,:));
-                set(gca,'XDir','Reverse');
                 hold on;
+                loglog(h(fig,:),herr(fig,:), '--');
+                set(gca,'XDir','Reverse');
                 grid on;
                 drawnow;
             end
@@ -235,8 +237,9 @@ function test_gradient_reconstruction(pd)
     pos = 1;
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
+        data = compute_cell_data(pd, ii);
         l = projector(pd, ii, @f_solution);
-        R = reconstruction_operator(pd, ii);
+        R = reconstruction_operator(pd, ii, data.SM);
         g = R*l;
         
         tps = make_test_points(pd, ii);
@@ -312,7 +315,7 @@ function [AC, bC] = static_condensation(pd, A, bT)
 end
 
 % Run HHO method
-function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
+function [L2error, x_val, potential, H1error] = hho(pd, loadfun, solfun)
     cell_size = pd.K+1;
     face_offset = cell_size*pd.N;
     num_cells = pd.N;
@@ -353,8 +356,10 @@ function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
     % Solve linear system
     result = globA\globrhs;
     
+    L2error = 0;
+    H1error = 0;
+    
     % Postprocess
-    error = 0;
     pos = 1;
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
@@ -379,11 +384,17 @@ function [globerr, x_val, potential] = hho(pd, loadfun, solfun)
             potential(pos) = solT'*phi;
             pos = pos+1;
         end
-        
-        error = error + compute_error(pd, ii, solfun, solT);
+        u = projector(pd, ii, solfun);
+        uh = [solT; solF];
+        diffH1 = u - uh;
+        diffL2 = u(1:cell_size) - solT;
+        H1error = H1error + dot(diffH1', LC*diffH1);
+        %error = error + compute_error(pd, ii, solfun, solT);
+        L2error = L2error + dot(diffL2', data.MM(1:cell_size, 1:cell_size)*diffL2);
     end
     
-    globerr = sqrt(error);
+    H1error = sqrt(H1error);
+    L2error = sqrt(L2error);
 end
 
 function hho_eigenvalues(pd)
@@ -419,9 +430,16 @@ function hho_eigenvalues(pd)
         for dof_i = 1:cell_size+2
             for dof_j = 1:cell_size+2
                 globA(l2g(dof_i),l2g(dof_j)) = globA(l2g(dof_i),l2g(dof_j)) + LC(dof_i, dof_j);
-                globR(l2g(dof_i),l2g(dof_j)) = globR(l2g(dof_i),l2g(dof_j)) + B(dof_i, dof_j);
+                %globR(l2g(dof_i),l2g(dof_j)) = globR(l2g(dof_i),l2g(dof_j)) + B(dof_i, dof_j);
             end
         end
+        
+        for dof_i = 1:cell_size
+            for dof_j = 1:cell_size
+                globR(l2g(dof_i),l2g(dof_j)) = globR(l2g(dof_i),l2g(dof_j)) + data.MM(dof_i, dof_j);
+            end
+        end
+        
     end
     
     % Apply boundary conditions
@@ -434,11 +452,29 @@ function hho_eigenvalues(pd)
     globR(face_offset+num_faces-1,:) = [];
     globR(:,face_offset+num_faces-1) = [];
     
-    % Solve eigenvalue problem
-    sz = size(globA);
+    problem_formulation = 2;
     
-    [V,D] = eig(full(globA), full(globR));
+    if (problem_formulation == 1)
+        [V,D] = eig(full(globA), full(globR));
+    else
+        
+        NA = globA(1:face_offset, 1:face_offset);
+        NB = globA(1:face_offset, face_offset+1:end);
+        ND = globA(face_offset+1:end, face_offset+1:end);
+        NM = globR(1:face_offset, 1:face_offset);
+        NS = NA - NB*(ND\NB');
+        
+    
+        % Solve eigenvalue problem
+        [V1,D] = eig(full(NS), full(NM));
+        sz = size(V1);
+        for vv = 1:sz(2)
+            NV = -ND\(NB'*V1(:,vv));
+            V(:,vv) = [V1(:,vv);NV];
+        end
+    end
     DD = diag(D);
+    disp(sprintf('Num of eigenvalues: %g', length(DD)));
     
     %K = [DD,V];
     [~,I] = sort(DD);
@@ -451,45 +487,119 @@ function hho_eigenvalues(pd)
     for ev_i = 1:length(DD)
         disp(sprintf('Eigenvalue: %g', lambda_h(ev_i)));
         eigv = V(:,I(ev_i));
-        reconstruct_eigenvector(pd, eigv, ev_i);
-        pause;
+        [L2e, H1e, Se, De] = reconstruct_eigenvector(pd, eigv, ev_i);
+        L2error(ev_i) = L2e;
+        H1error(ev_i) = H1e;
+        Serror(ev_i) = Se;
+        Derror(ev_i) = De;
     end
     
-    %plot(eig_error)
+    plot(eig_error);
+    hold on;
+    plot(L2error);
+    He = H1error'./lambda;
+    plot(He);
+    Se = Serror'./lambda;
+    plot(Se);
+    De = Derror'./lambda;
+    plot(Derror);
+    plot(eig_error + L2error' + He - Se - De)
+    
+    
    
+    legend('Eig', 'L2', 'H1', 'S', 'D', 'Sum');
 end
 
-function reconstruct_eigenvector(pd, ev, ev_i)
-    pos = 1;
-    error = 0;
+function [L2error, H1error, Serror, Derror] = reconstruct_eigenvector(pd, ev, ev_i)
+    cell_size = pd.K+1;
+    face_offset = cell_size*pd.N;
+    Lpos = 1;
+    Hpos = 1;
+    H1error = 0;
+    Serror = 0;
+    Derror = 0;
+    
+    factor = 1;
+%     if (pd.K == 0)
+%         factor = sqrt(2);
+%     else
+%         factor = 1;
+%     end
+    
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
+        [xF1, xF2] = face_centers(pd, ii);
+        
+        data = compute_cell_data(pd, ii);
+        R = reconstruction_operator(pd, ii, data.SM);
+        S = stabilization(pd, ii, R, data.MM);
+        A = R' * data.SM(2:end, 2:end) * R;
+        
+        start = (ii-1) * (pd.K+1) + 1;
+        stop = ii * (pd.K+1);
+        
         [nodes,weights] = gauss_quadrature(2*pd.K, pd.h, ii);
- 
         for kk = 1:length(nodes)
             [phi, ~] = basis(xT, nodes(kk), pd.h, pd.K);
-            start = (ii-1) * (pd.K+1) + 1;
-            stop = ii * (pd.K+1);
-            x_val(pos) = nodes(kk);
+            x_val(Lpos) = nodes(kk);
             yh = dot( ev(start:stop), phi );
-            y = sin(ev_i*pi*nodes(kk));
-            w(pos) = weights(kk);
-            yh_val(pos) = yh;
-            y_val(pos) = y;
-            pos = pos+1;
+            y = factor*sin(ev_i*pi*nodes(kk));
+            w(Lpos) = weights(kk);
+            yh_val(Lpos) = yh;
+            y_val(Lpos) = y;
+            Lpos = Lpos+1;
         end
+        
+        if (ii == 1)
+            uh = [ev(start:stop); 0; ev(face_offset+ii)];
+        else if (ii == pd.N)
+            uh = [ev(start:stop); ev(face_offset+ii-1); 0];
+            else
+                uh = [ev(start:stop); ev(face_offset+ii-1); ev(face_offset+ii)];
+            end
+        end
+        
+        Serror = Serror + uh'*S*uh;
+        
+        g = R*uh;
+        [nodes,weights] = gauss_quadrature(2*pd.K+2, pd.h, ii);
+        for kk = 1:length(nodes)
+            [~, dphi] = basis(xT, nodes(kk), pd.h, pd.K+1);
+            dx_val(Hpos) = nodes(kk);
+            
+            dyh = dot( g, dphi(2:end) );                    % approx gradient
+            dy = factor*ev_i*pi*cos(ev_i*pi*nodes(kk));    % expected gradient
+            dw(Hpos) = weights(kk);                         % weights
+            
+            dyh_val(Hpos) = dyh;
+            dy_val(Hpos) = dy;
+            Hpos = Hpos+1;
+        end
+        
+        phiF1 = basis(xT, xF1, pd.h, pd.K); 
+        
+        Derror = Derror - uh(cell_size+1);
+        Derror = Derror + uh(cell_size+2);
     end
     
     if (yh_val(2) < yh_val(1))
         yh_val = -yh_val;
     end
     
-    error = sqrt(dot(w, (yh_val - y_val).^2));
-    error
-    plot(x_val, yh_val);
-    hold on;
-    plot(x_val, y_val);
-    hold off;
+    if (dyh_val(6) > dyh_val(1))
+        dyh_val = -dyh_val;
+    end
+    
+    L2error = dot(w, (yh_val - y_val).^2);
+    H1error = dot(dw, (dyh_val - dy_val).^2);
+    
+%       plot(x_val, yh_val);
+%       hold on;
+%       plot(x_val, y_val);
+%       plot(dx_val, dyh_val);
+%       plot(dx_val, dy_val);
+%       hold off;
+%       pause;
 end
 
 
