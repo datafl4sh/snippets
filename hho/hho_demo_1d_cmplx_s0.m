@@ -9,15 +9,16 @@
 
 function hho()
 
-    what = 1;
+    what = 4;
 
     if (what == 1)
         plot_hho_convergence();
     end
     
-    N = 32;
+    N = 64;
     K = 1;
     pd = initialize_hho(N, K);
+    pd.gamma = 5;
     
     if (what == 2)
         test_gradient_reconstruction(pd)
@@ -40,6 +41,7 @@ function pd = initialize_hho(N, K)
     pd.N = N;
     pd.K = K;
     pd.h = 1/pd.N;
+    pd.gamma = 1;
     pd.tp = 8;
 end
 
@@ -59,7 +61,7 @@ end
 function plot_hho_convergence()
     
     for deg = 0:4
-        maxii = 5;%11;
+        maxii = 11;
         nodes = 4;
         for ii = 1:maxii
             disp(sprintf('**** N = %d, K = %d ****', nodes, deg));
@@ -74,7 +76,7 @@ function plot_hho_convergence()
             for fig = 1:deg+1
                 loglog(h(fig,:),err(fig,:));
                 hold on;
-                %loglog(h(fig,:),herr(fig,:), '--');
+                loglog(h(fig,:),herr(fig,:), '--');
                 set(gca,'XDir','Reverse');
                 grid on;
                 drawnow;
@@ -276,7 +278,7 @@ function test_gradient_reconstruction(pd)
 end
 
 % Compute stabilization
-function S = stabilization_old(pd, ii, R, mass_mat)
+function S = stabilization(pd, ii, R, mass_mat)
     
     xT = cell_center(pd, ii);
     [xF1, xF2] = face_centers(pd, ii);
@@ -303,41 +305,6 @@ function S = stabilization_old(pd, ii, R, mass_mat)
     P3 = MFF \ (MFT(1:pd.K+1)'*P1);
     B = P2 + P3;
     S = S + B' * MFF * B / pd.h;
-end
-
-function diff = compute_diff(pd, ii, R, mass_mat, uhTh)
-    M1 = mass_mat(1:pd.K+1,1:pd.K+1);
-    M2 = mass_mat(1:pd.K+1,2:pd.K+2);
-    P1 = - M1\(M2*R);
-    P1(1:pd.K+1, 1:pd.K+1) = P1(1:pd.K+1, 1:pd.K+1) + eye(pd.K+1);
-    MM = P1 * uhTh;
-    diff = MM' * M1 * MM;
-end
-
-function S = stabilization_new(pd, ii, R, mass_mat)
-    
-    xT = cell_center(pd, ii);
-    [xF1, xF2] = face_centers(pd, ii);
-    
-    sz = size(R);
-    const = zeros(1, sz(2));
-    const(1) = 1;
-    RR = [const;R];
-    
-    [phiF1, ~] = basis(xT, xF1, pd.h, pd.K+1);
-    B = phiF1'*RR;
-    B(pd.K+2) = B(pd.K+2)-1;
-    S = B' * B / pd.h;
-
-    [phiF2, ~] = basis(xT, xF2, pd.h, pd.K+1);
-    B = phiF2'*RR;
-    B(pd.K+3) = B(pd.K+3)-1;
-    S = B' * B / pd.h;
-    
-end
-
-function S = stabilization(pd, ii, R, mass_mat)
-    S = stabilization_old(pd, ii, R, mass_mat);
 end
 
 % Compute cell right hand side
@@ -404,7 +371,7 @@ function [L2error, x_val, potential, H1error] = hho(pd, loadfun, solfun)
     globA(1, num_faces+1) = 1;
     globA(num_faces, num_faces+2) = 1;
     
-    %disp(sprintf('Condition number: %g', condest(globA)));
+    disp(sprintf('Condition number: %g', condest(globA)));
     
     % Solve linear system
     result = globA\globrhs;
@@ -413,7 +380,6 @@ function [L2error, x_val, potential, H1error] = hho(pd, loadfun, solfun)
     H1error = 0;
     
     % Postprocess
-    errdiff = 0;
     pos = 1;
     for ii = 1:pd.N
         xT = cell_center(pd, ii);
@@ -440,27 +406,12 @@ function [L2error, x_val, potential, H1error] = hho(pd, loadfun, solfun)
         end
         u = projector(pd, ii, solfun);
         uh = [solT; solF];
-        errdiff = errdiff + compute_diff(pd, ii, R, data.MM, uh);
         diffH1 = u - uh;
-        %diffL2 = u(1:cell_size) - solT;
+        diffL2 = u(1:cell_size) - solT;
         H1error = H1error + dot(diffH1', LC*diffH1);
         %error = error + compute_error(pd, ii, solfun, solT);
-        %L2error = L2error + dot(diffL2', data.MM(1:cell_size, 1:cell_size)*diffL2);
-        
-        g = R*uh;
-        
-        [nodes,weights] = gauss_quadrature(2*pd.K+2, pd.h, ii);
-        for jj = 1:length(nodes)
-            [phi, ~] = basis(xT, nodes(jj), pd.h, pd.K+1);
-            fval = dot(g, phi(2:end)) + solT(1);
-            sval = solfun(nodes(jj));
-            
-            L2error = L2error + weights(jj) * (fval-sval)^2;
-        end
-        
+        L2error = L2error + dot(diffL2', data.MM(1:cell_size, 1:cell_size)*diffL2);
     end
-    
-    errdiff
     
     H1error = sqrt(H1error);
     L2error = sqrt(L2error);
@@ -794,7 +745,7 @@ function hho_eigenvalues(pd)
         R = reconstruction_operator(pd, ii, data.SM);
         S = stabilization(pd, ii, R, data.MM);
         K = R' * data.SM(2:end, 2:end) * R;
-        LC = K + S;
+        LC = K + pd.gamma*i*S;
         
         sz = size(R);
         const = zeros(1, sz(2));
@@ -851,14 +802,15 @@ function hho_eigenvalues(pd)
     NB = globK(1:face_offset, face_offset+1:end);
     ND = globK(face_offset+1:end, face_offset+1:end);
     NM = globM(1:face_offset, 1:face_offset);
-    NS = NA - NB*(ND\NB');
+    NBt = transpose(NB);
+    NS = NA - NB*(ND\NBt);
 
 
     % Solve eigenvalue problem
     [V1,D] = eig(full(NS), full(NM));
     sz = size(V1);
     for vv = 1:sz(2)
-        NV = -ND\(NB'*V1(:,vv));
+        NV = -ND\(NBt*V1(:,vv));
         ev = V1(:,vv);
         V(:,vv) = [ev;NV];
     end
@@ -875,73 +827,57 @@ function hho_eigenvalues(pd)
     
     lambda_err = (lambda_h - lambda)./lambda;
     
+    subplot(2,1,1)
+    plot(real(lambda_h)./lambda);
+    subplot(2,1,2)
+    plot(imag(lambda_h)./lambda);
+    
+    %LL = [real(lambda_h)./lambda, imag(lambda_h)./lambda, angle(lambda_h)];
+    %[~, I] = sort(LL(:,3));
+    %subplot(2,1,1)
+    %plot(LL(I,1));
+    %subplot(2,1,2)
+    %plot(LL(I,2));
+    
     for ev_i = 1:length(DD)
-        disp(sprintf('Eigenvalue: %g', lambda_h(ev_i)));
+        disp(sprintf('Eigenvalue: %g %g %g', real(lambda_h(ev_i)), imag(lambda_h(ev_i)), abs(lambda_h(ev_i)) ));
         eigv = V(:,I(ev_i));                %get eigvector
         nf = dot(eigv,globM*eigv);          %compute eigenfunction norm
         eigv = eigv/sqrt(nf);               %normalize eigenfunction
         %hho_plot_eigfun(pd, eigv, ev_i);
         %pause;
-        errs = compute_errs(pd, eigv, ev_i);
+        %errs = compute_errs(pd, eigv, ev_i);
         
         %L2R(ev_i)   = errs.L2R;
         %L2I(ev_i)   = errs.L2I;
         %H1(ev_i)    = errs.H1;
-        L2R(ev_i)   = errs.L2R;
-        L2I(ev_i)   = errs.L2I;
-        H1(ev_i)    = errs.H1;
-        Se(ev_i)    = errs.S;
-        De(ev_i)    = errs.D;
-        Rn(ev_i)    = errs.Rn;
+        %Se(ev_i)    = errs.S;
+        %De(ev_i)    = errs.D;
+        %Rn(ev_i)    = errs.Rn;
     end
     
-    H1 = H1' ./ lambda;
-    Se = Se' ./ lambda;
-    De = De' ./ lambda;
+%     H1 = H1' ./ lambda;
+%     Se = Se' ./ lambda;
+%     De = De' ./ lambda;
+%     
+%     subplot(2,1,1);
+%     plot(lambda_err);
+%     hold on;
+%     plot(L2R);
+%     %plot(L2I);
+%     plot(Rn);
+%     plot(H1);
+%     plot(Se);
+%     plot(De);
+%     
+%     Sum = lambda_err + L2R' + 1 - Rn' - Se - 2*De;
+%     plot(Sum);
+%     grid on;
+%     legend('Eig', 'L2R', 'Rn', 'H1', 'S', 'Jump', 'Sum');
+%     subplot(2,1,2);
+%     semilogy(abs(H1-Sum));
+%     grid on;
+%     legend('H1 - Sum');
     
-    subplot(2,1,1);
-    plot(lambda_err);
-    hold on;
-    plot(L2R);
-    %plot(L2I);
-    plot(Rn);
-    plot(H1);
-    plot(Se);
-    plot(De);
-    
-    Sum = lambda_err + L2R' + 1 - Rn' - Se - 2*De;
-    plot(Sum);
-    grid on;
-    legend('Eig', 'L2R', 'Rn', 'H1', 'S', 'Jump', 'Sum');
-    subplot(2,1,2);
-    semilogy(abs(H1-Sum));
-    grid on;
-    legend('H1 - Sum');
-    
-    
-    %He = H1error'./lambda;                  % H1 norm error
-    %lambdae = (lambda_h-lambda)./lambda;    % Eigenvalue error
-    %lambdae = (lambda.*(1-2*alpha') + lambda_h)./lambda;
-    %Le = L2error';                          % L2 norm error
-    %Se = Serror'./(lambda .* (alpha.^2)');                   % Stabilization error
-    %De = Derror'./(lambda .* alpha'); 
-    % Jump error
-
-    %subplot(2,1,1);
-    %plot(He);
-    %hold on;
-    %plot(Le);
-    %plot(lambdae);
-    %plot(Se);
-    %plot(Rns);
-    %plot(De);
-    %Sum = lambdae + Le + (1 - Rns').*alpha' - Se - De;
-    %plot(Sum);
-    %grid on;
-    %legend('H1', 'L2', 'Eig', 'S', 'Rn', 'Delta', 'Sum');
-    %subplot(2,1,2);
-    %semilogy(abs(He-Sum));
-    %grid on;
-    %legend('H1 - Sum');
 end
 
