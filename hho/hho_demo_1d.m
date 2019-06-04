@@ -9,7 +9,7 @@
 
 function hho()
 
-    what = 1;
+    what = 4;
 
     if (what == 1)
         plot_hho_convergence();
@@ -59,7 +59,7 @@ end
 function plot_hho_convergence()
     
     for deg = 0:4
-        maxii = 5;%11;
+        maxii = 7;%11;
         nodes = 4;
         for ii = 1:maxii
             disp(sprintf('**** N = %d, K = %d ****', nodes, deg));
@@ -799,7 +799,8 @@ function hho_eigenvalues(pd)
         sz = size(R);
         const = zeros(1, sz(2));
         const(1) = 1;
-        B = [const;R]'*data.MM*[const;R];
+        %B = [const;R]'*data.MM*[const;R];
+        B = R'*data.MM*R;
         
         
         for dof_i = 1:cell_size
