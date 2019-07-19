@@ -6,21 +6,21 @@
 
 from math import log10, sqrt
 
-frequency       = 2450  # Frequency in MHz
-distance        = 10    # Distance in kilometers
-foliage_depth   = 0     # ITU-R foliage model, 0-400 meters
+frequency       = 5675  # Frequency in MHz
+distance        = 3.6   # Distance in kilometers
+foliage_depth   = 10    # ITU-R foliage model, 0-400 meters
 
 #### Site A parameters ####
-pwr_tx_a        = 27    # Transmitter power in dBm
-gain_a          = 10    # Antenna gain in dB
+pwr_tx_a        = 29    # Transmitter power in dBm
+gain_a          = 23    # Antenna gain in dB
 cable_loss_a    = 0     # Cable losses in dB
 other_losses_a  = 0     # Other losses in dB
 sensitivity_a   = -88   # Receiver sensitivity in dBm
 reqd_margin_a   = 12    # Required margin in dB
 
 #### Site B parameters ####
-pwr_tx_b        = 27    # Transmitter power in dBm
-gain_b          = 10    # Antenna gain in dB
+pwr_tx_b        = 29    # Transmitter power in dBm
+gain_b          = 23    # Antenna gain in dB
 cable_loss_b    = 0     # Cable losses in dB
 other_losses_b  = 0     # Other losses in dB
 sensitivity_b   = -88   # Receiver sensitivity in dBm

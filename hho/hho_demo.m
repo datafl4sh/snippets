@@ -1,32 +1,32 @@
-function  hho()
+function  hho_demo()
     
-%     for deg = 0:4
-%         maxii = 7;
-%         nodes = 4;
-%         for ii = 1:maxii
-%             disp(sprintf('**** N = %d, K = %d ****', nodes, deg));
-%             pd = initialize_hho(nodes, deg);
-%             e = hho(pd, @f_load, @f_solution);
-%             err(deg+1, ii) = e;
-%             h(deg+1, ii) = 1/nodes;
-%             disp(sprintf('h = %g, error = %g', 1/nodes, e));
-%             nodes = nodes*2;
-%             
-%             for fig = 1:deg+1
-%                 loglog(h(fig,:),err(fig,:));
-%                 set(gca,'XDir','Reverse');
-%                 hold on;
-%                 grid on;
-%                 drawnow;
-%             end
-%             hold off;
-%         end
-%     end
+     for deg = 0:4
+         maxii = 7;
+         nodes = 4;
+         for ii = 1:maxii
+             disp(sprintf('**** N = %d, K = %d ****', nodes, deg));
+             pd = initialize_hho(nodes, deg);
+             e = hho(pd, @f_load, @f_solution);
+             err(deg+1, ii) = e;
+             h(deg+1, ii) = 1/nodes;
+             disp(sprintf('h = %g, error = %g', 1/nodes, e));
+             nodes = nodes*2;
+             
+             for fig = 1:deg+1
+                 loglog(h(fig,:),err(fig,:));
+                 set(gca,'XDir','Reverse');
+                 hold on;
+                 grid on;
+                 drawnow;
+             end
+             hold off;
+         end
+     end
 
-nodes = 4;
-deg = 0;
-pd = initialize_hho(nodes, deg);
-show_gr(pd);
+##nodes = 4;
+##deg = 0;
+##pd = initialize_hho(nodes, deg);
+##show_gr(pd);
 end
     
 
@@ -160,7 +160,7 @@ function [GT, A] = gradient_reconstruction(pd, ii)
         [~, dphi] = basis(xT, nodes(wi), pd.h, pd.K+1);
         stiff_mat = stiff_mat + weights(wi)*dphi*dphi';
     end
-    disp(stiff_mat);
+    ##disp(stiff_mat);
     MG = stiff_mat(2:end, 2:end);
     BG(:,1:pd.K+1) = stiff_mat(2:end,1:pd.K+1);
     [phiF1, dphiF1] = basis(xT, xF1, pd.h, pd.K+1);
@@ -171,7 +171,7 @@ function [GT, A] = gradient_reconstruction(pd, ii)
     BG(1:end, pd.K+2) = - dphiF1(2:end);
     BG(1:end, pd.K+3) = + dphiF2(2:end);
     
-    disp(BG);
+    ##disp(BG);
     
     GT = MG\BG;
     A = BG'*GT;
